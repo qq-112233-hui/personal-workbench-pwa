@@ -1,15 +1,18 @@
 /* Service Worker —— 个人工作台 PWA 离线支持
  * 策略：
- *  - 安装时预缓存应用外壳（index.html / manifest / 图标）
+ *  - 安装时预缓存应用外壳（index.html / manifest / 图标）；逐个缓存，单个失败不影响整体
  *  - 导航请求：网络优先，失败回退缓存首页（保证断网仍可打开）
  *  - 其他静态资源：缓存优先，缺失则网络拉取并回填
  *  - 跨域请求（如资料库 API）一律放行，不拦截
+ *
+ * ⚠️ 改了 index.html 或站点其它文件后，请把下面的 CACHE 版本号 +1（v2 → v3 …），
+ *    这样访问者下次打开才会拉到新文件，否则会一直吃旧缓存。
  */
-const CACHE = 'pd-workbench-v1';
+const CACHE = 'pd-workbench-v2';
 const ASSETS = [
   './',
   './index.html',
-  './manifest.webmanifest',
+  './manifest.json',
   './icon-192.png',
   './icon-512.png',
   './icon.svg'
@@ -18,9 +21,10 @@ const ASSETS = [
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE)
-      .then(cache => cache.addAll(ASSETS))
+      .then(cache => Promise.all(
+        ASSETS.map(url => cache.add(url).catch(err => console.warn('[SW] 预缓存跳过：', url, err)))
+      ))
       .then(() => self.skipWaiting())
-      .catch(err => console.warn('[SW] 预缓存失败：', err))
   );
 });
 
@@ -49,7 +53,7 @@ self.addEventListener('fetch', event => {
           caches.open(CACHE).then(c => c.put('./index.html', copy));
           return res;
         })
-        .catch(() => caches.match('./index.html'))
+        .catch(() => caches.match('./index.html').then(r => r || Response.error()))
     );
     return;
   }
@@ -64,7 +68,7 @@ self.addEventListener('fetch', event => {
           caches.open(CACHE).then(c => c.put(req, copy));
         }
         return res;
-      }).catch(() => cached);
+      }).catch(() => cached || Response.error());
     })
   );
 });
